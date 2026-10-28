@@ -246,3 +246,713 @@
     // ==========================================
     // ПОДДЕРЖКА СВАЙПОВ ВЛЕВО / ВПРАВО
     // ==========================================
+    let touchStartX = 0;
+    let touchStartY = 0;
+    let ignoreSwipe = false;
+
+    document.addEventListener('touchstart', (e) => {
+      if (uiModal) return; // Если открыто модальное окно, свайпы вкладок отключены
+      const touch = e.touches[0];
+      touchStartX = touch.clientX;
+      touchStartY = touch.clientY;
+
+      // Проверяем, не начал ли пользователь жест внутри горизонтального скролла (папки/счета) или поля ввода
+      const target = e.target;
+      if (target.closest('.no-scrollbar') || target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT') {
+        ignoreSwipe = true;
+      } else {
+        ignoreSwipe = false;
+      }
+    }, { passive: true });
+
+    document.addEventListener('touchend', (e) => {
+      if (uiModal || ignoreSwipe) return;
+      const touch = e.changedTouches[0];
+      const deltaX = touch.clientX - touchStartX;
+      const deltaY = touch.clientY - touchStartY;
+
+      // Срабатывает только если горизонтальный свайп длиннее 65px и явно горизонтальный
+      if (Math.abs(deltaX) > 65 && Math.abs(deltaX) > Math.abs(deltaY) * 1.6) {
+        // Если открыт редактор заметки — свайп вправо закрывает его назад к списку
+        if (editingNoteId) {
+          if (deltaX > 0) closeNoteEditor();
+          return;
+        }
+
+        const currentIndex = TABS_ORDER.indexOf(state.activeTab);
+        if (deltaX < 0 && currentIndex < TABS_ORDER.length - 1) {
+          // Свайп влево -> следующая вкладка справа
+          switchTab(TABS_ORDER[currentIndex + 1]);
+        } else if (deltaX > 0 && currentIndex > 0) {
+          // Свайп вправо -> предыдущая вкладка слева
+          switchTab(TABS_ORDER[currentIndex - 1]);
+        }
+      }
+    }, { passive: true });
+
+    // ==========================================
+    // РЕНДЕРИНГ ИНТЕРФЕЙСА
+    // ==========================================
+    function render() {
+      applyTheme();
+      const app = document.getElementById('app');
+      const accent = ACCENTS[state.activeTab];
+
+      if (editingNoteId) {
+        app.innerHTML = renderNoteEditor();
+        lucide.createIcons();
+        return;
+      }
+
+      let contentHtml = '';
+      if (state.activeTab === 'notes') contentHtml = renderNotesTab(accent);
+      if (state.activeTab === 'budget') contentHtml = renderBudgetTab(accent);
+      if (state.activeTab === 'calendar') contentHtml = renderCalendarTab(accent);
+
+      const currentIdx = TABS_ORDER.indexOf(state.activeTab);
+
+      app.innerHTML = `
+        <!-- Шапка -->
+        <header class="sticky top-0 z-20 px-4 pt-4 pb-3 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 flex items-center justify-between transition-colors duration-300">
+          <div class="flex items-center gap-2.5">
+            <span class="w-3 h-3 rounded-full ${accent.bg} transition-colors duration-300"></span>
+            <h1 class="text-xl font-bold tracking-tight">${accent.name}</h1>
+            <!-- Точки-индикаторы для подсказки свайпа -->
+            <div class="flex items-center gap-1 ml-2">
+              ${TABS_ORDER.map((t, i) => `
+                <span class="h-1.5 rounded-full transition-all duration-300 ${i === currentIdx ? `w-4 ${accent.bg}` : 'w-1.5 bg-slate-300 dark:bg-slate-700'}"></span>
+              `).join('')}
+            </div>
+          </div>
+          <div class="flex items-center gap-2">
+            ${state.activeTab === 'notes' ? `
+              <button onclick="openModal('folders')" class="px-3 py-1.5 rounded-xl text-xs font-medium bg-slate-100 dark:bg-slate-800 hover:opacity-80 flex items-center gap-1.5 transition">
+                <i data-lucide="folder-cog" class="w-4 h-4 ${accent.text}"></i> Папки
+              </button>
+            ` : ''}
+            ${state.activeTab === 'budget' ? `
+              <button onclick="openModal('categories')" class="px-3 py-1.5 rounded-xl text-xs font-medium bg-slate-100 dark:bg-slate-800 hover:opacity-80 flex items-center gap-1.5 transition">
+                <i data-lucide="tags" class="w-4 h-4 ${accent.text}"></i> Категории
+              </button>
+            ` : ''}
+            <button onclick="toggleTheme()" class="p-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 transition active:scale-90">
+              <i data-lucide="${state.theme === 'dark' ? 'sun' : 'moon'}" class="w-5 h-5"></i>
+            </button>
+          </div>
+        </header>
+
+        <!-- Анимированный контейнер вкладки -->
+        <main class="flex-1 px-4 py-4 space-y-4 ${tabAnimClass}">
+          ${contentHtml}
+        </main>
+
+        <!-- Плавающая кнопка + -->
+        <button onclick="handlePlusClick()" class="fixed bottom-20 right-5 z-30 w-14 h-14 rounded-2xl ${accent.bg} ${accent.bgHover} text-white shadow-lg flex items-center justify-center transition-all duration-300 active:scale-90">
+          <i data-lucide="plus" class="w-7 h-7"></i>
+        </button>
+
+        <!-- Нижняя навигация с плавной полоской-индикатором -->
+        <nav class="fixed bottom-0 left-0 right-0 max-w-md mx-auto z-30 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 grid grid-cols-3 py-2 px-2 relative">
+          <!-- Ползунок активной вкладки -->
+          <div class="absolute top-0 left-0 h-0.5 w-1/3 ${accent.bg} transition-transform duration-300 ease-out" style="transform: translateX(${currentIdx * 100}%)"></div>
+
+          <button onclick="switchTab('notes')" class="flex flex-col items-center py-1 rounded-xl transition-all duration-200 ${state.activeTab === 'notes' ? 'text-orange-500 font-semibold scale-105' : 'text-slate-400 dark:text-slate-500'}">
+            <i data-lucide="notebook-pen" class="w-5 h-5 mb-0.5"></i>
+            <span class="text-[11px]">Заметки</span>
+          </button>
+          <button onclick="switchTab('budget')" class="flex flex-col items-center py-1 rounded-xl transition-all duration-200 ${state.activeTab === 'budget' ? 'text-emerald-500 font-semibold scale-105' : 'text-slate-400 dark:text-slate-500'}">
+            <i data-lucide="wallet" class="w-5 h-5 mb-0.5"></i>
+            <span class="text-[11px]">Бюджет</span>
+          </button>
+          <button onclick="switchTab('calendar')" class="flex flex-col items-center py-1 rounded-xl transition-all duration-200 ${state.activeTab === 'calendar' ? 'text-sky-500 font-semibold scale-105' : 'text-slate-400 dark:text-slate-500'}">
+            <i data-lucide="calendar-days" class="w-5 h-5 mb-0.5"></i>
+            <span class="text-[11px]">Календарь</span>
+          </button>
+        </nav>
+
+        ${uiModal ? renderModal(accent) : ''}
+      `;
+      lucide.createIcons();
+    }
+
+    // ==========================================
+    // ВКЛАДКА 1: ЗАМЕТКИ
+    // ==========================================
+    function renderNotesTab(accent) {
+      const isTrash = state.activeFolderId === 'trash';
+      const filteredNotes = state.notes.filter(n => {
+        if (isTrash) return n.isDeleted;
+        if (n.isDeleted) return false;
+        if (state.activeFolderId === 'all') return true;
+        return n.folderId === state.activeFolderId;
+      }).sort((a, b) => (b.isPinned ? 1 : 0) - (a.isPinned ? 1 : 0));
+
+      return `
+        <div class="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1">
+          <button onclick="selectFolder('all')" class="px-3.5 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-all duration-200 ${state.activeFolderId === 'all' ? `${accent.bg} text-white shadow-sm` : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400'}">Все</button>
+          ${state.folders.map(f => `
+            <button onclick="selectFolder('${f.id}')" class="px-3.5 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-all duration-200 ${state.activeFolderId === f.id ? `${accent.bg} text-white shadow-sm` : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400'}">${f.name}</button>
+          `).join('')}
+          <button onclick="selectFolder('trash')" class="px-3.5 py-1.5 rounded-full text-xs font-medium whitespace-nowrap flex items-center gap-1 transition-all duration-200 ${isTrash ? 'bg-rose-500 text-white shadow-sm' : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400'}">
+            <i data-lucide="trash-2" class="w-3.5 h-3.5"></i> Корзина
+          </button>
+        </div>
+
+        <div class="space-y-3">
+          ${filteredNotes.length === 0 ? `
+            <div class="text-center py-14 text-slate-400 text-sm">
+              <i data-lucide="notebook" class="w-10 h-10 mx-auto mb-2 opacity-40"></i>
+              ${isTrash ? 'Корзина пуста' : 'Заметок пока нет. Нажми «+», чтобы создать!'}
+            </div>
+          ` : filteredNotes.map(n => {
+            const folder = state.folders.find(f => f.id === n.folderId);
+            return `
+              <div onclick="${isTrash ? '' : `openNote('${n.id}')`}" class="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200/80 dark:border-slate-800 hover:border-orange-500/50 active:scale-[0.99] transition-all duration-200 cursor-pointer">
+                <div class="flex items-start justify-between mb-1">
+                  <h3 class="font-semibold text-base">${n.title || 'Без названия'}</h3>
+                  ${n.isPinned && !isTrash ? `<i data-lucide="pin" class="w-4 h-4 text-orange-500 fill-orange-500"></i>` : ''}
+                </div>
+                ${n.content ? `<p class="text-xs text-slate-500 dark:text-slate-400 line-clamp-2 mb-2">${n.content}</p>` : ''}
+                ${n.checklist && n.checklist.length > 0 ? `
+                  <div class="space-y-1 my-2" onclick="event.stopPropagation()">
+                    ${n.checklist.slice(0, 4).map(it => `
+                      <label class="flex items-center gap-2 text-xs cursor-pointer">
+                        <input type="checkbox" ${it.done ? 'checked' : ''} onchange="toggleCheckItem('${n.id}', '${it.id}')" class="rounded accent-orange-500 w-4 h-4" />
+                        <span class="${it.done ? 'line-through text-slate-400' : ''}">${it.text}</span>
+                      </label>
+                    `).join('')}
+                    ${n.checklist.length > 4 ? `<p class="text-[11px] text-slate-400">+ еще ${n.checklist.length - 4} п.</p>` : ''}
+                  </div>
+                ` : ''}
+                <div class="flex items-center justify-between mt-3 pt-2 border-t border-slate-200/60 dark:border-slate-700/50 text-[11px] text-slate-400">
+                  <span class="px-2 py-0.5 rounded-md bg-orange-500/10 text-orange-500 font-medium">${folder ? folder.name : 'Без папки'}</span>
+                  ${isTrash ? `
+                    <div class="flex gap-3" onclick="event.stopPropagation()">
+                      <button onclick="restoreNote('${n.id}')" class="text-emerald-500 font-medium">Восстановить</button>
+                      <button onclick="deleteNoteForever('${n.id}')" class="text-rose-500 font-medium">Удалить</button>
+                    </div>
+                  ` : `<span>${n.updatedAt}</span>`}
+                </div>
+              </div>
+            `;
+          }).join('')}
+        </div>
+      `;
+    }
+
+    function renderNoteEditor() {
+      const note = state.notes.find(n => n.id === editingNoteId);
+      if (!note) return '';
+
+      return `
+        <div class="flex flex-col min-h-screen bg-white dark:bg-slate-900 ${isClosingEditor ? 'anim-fade-out' : 'anim-fade-in'}">
+          <div class="px-4 py-3 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between sticky top-0 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md z-10">
+            <button onclick="closeNoteEditor()" class="text-sm font-medium text-orange-500 flex items-center gap-1 active:scale-95 transition">
+              <i data-lucide="arrow-left" class="w-5 h-5"></i> Назад
+            </button>
+            <span class="text-[11px] text-emerald-500 font-medium flex items-center gap-1">
+              <i data-lucide="check-circle-2" class="w-3.5 h-3.5"></i> Автосохранено
+            </span>
+            <div class="flex items-center gap-2">
+              <button onclick="togglePinNote('${note.id}')" class="p-2 rounded-xl transition ${note.isPinned ? 'bg-orange-500/15 text-orange-500' : 'bg-slate-100 dark:bg-slate-800 text-slate-400'}">
+                <i data-lucide="pin" class="w-4 h-4"></i>
+              </button>
+              <button onclick="moveNoteToTrash('${note.id}')" class="p-2 rounded-xl bg-rose-500/10 text-rose-500">
+                <i data-lucide="trash-2" class="w-4 h-4"></i>
+              </button>
+            </div>
+          </div>
+
+          <div class="p-4 space-y-4 flex-1">
+            <div class="flex items-center gap-2 overflow-x-auto no-scrollbar">
+              <span class="text-xs text-slate-400">Папка:</span>
+              ${state.folders.map(f => `
+                <button onclick="updateNoteFolder('${note.id}', '${f.id}')" class="px-3 py-1 rounded-full text-xs font-medium transition ${note.folderId === f.id ? 'bg-orange-500 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-400'}">${f.name}</button>
+              `).join('')}
+            </div>
+
+            <input type="text" placeholder="Заголовок заметки..." value="${(note.title || '').replace(/"/g, '&quot;')}" oninput="autoSaveNote('${note.id}', 'title', this.value)" class="w-full text-xl font-bold bg-transparent focus:outline-none placeholder-slate-400" />
+            <textarea rows="6" placeholder="Начни писать мысль или заметку..." oninput="autoSaveNote('${note.id}', 'content', this.value)" class="w-full text-sm bg-transparent focus:outline-none resize-none leading-relaxed placeholder-slate-400">${note.content || ''}</textarea>
+
+            <div class="pt-3 border-t border-slate-200 dark:border-slate-800 space-y-2">
+              <div class="flex justify-between items-center">
+                <span class="text-xs text-slate-400 font-semibold uppercase tracking-wider">Чек-лист</span>
+                <button onclick="addChecklistItem('${note.id}')" class="text-xs text-orange-500 font-medium flex items-center gap-1">
+                  <i data-lucide="plus" class="w-3.5 h-3.5"></i> Добавить пункт
+                </button>
+              </div>
+              <div class="space-y-2">
+                ${(note.checklist || []).map(it => `
+                  <div class="flex items-center gap-2 bg-slate-50 dark:bg-slate-800/60 px-3 py-2 rounded-xl">
+                    <input type="checkbox" ${it.done ? 'checked' : ''} onchange="toggleCheckItem('${note.id}', '${it.id}')" class="w-4 h-4 rounded accent-orange-500" />
+                    <input type="text" value="${(it.text || '').replace(/"/g, '&quot;')}" oninput="autoSaveCheckText('${note.id}', '${it.id}', this.value)" placeholder="Пункт списка..." class="flex-1 text-sm bg-transparent focus:outline-none ${it.done ? 'line-through text-slate-400' : ''}" />
+                    <button onclick="removeCheckItem('${note.id}', '${it.id}')" class="text-slate-400 hover:text-rose-500">
+                      <i data-lucide="x" class="w-4 h-4"></i>
+                    </button>
+                  </div>
+                `).join('')}
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    // ==========================================
+    // ВКЛАДКА 2: БЮДЖЕТ
+    // ==========================================
+    function renderBudgetTab(accent) {
+      const filteredTx = state.transactions
+        .filter(t => state.selectedAccountId === 'all' || t.accountId === state.selectedAccountId)
+        .sort((a, b) => b.date.localeCompare(a.date));
+
+      const totalIncome = filteredTx.filter(t => t.type === 'income').reduce((s, t) => s + Number(t.amount), 0);
+      const totalExpense = filteredTx.filter(t => t.type === 'expense').reduce((s, t) => s + Number(t.amount), 0);
+
+      const header = `
+        <div class="p-4 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 text-white shadow-md">
+          <div class="flex justify-between items-center mb-1">
+            <span class="text-xs opacity-85">Общий баланс всех счетов</span>
+            <button onclick="openModal('accounts')" class="text-xs bg-white/20 hover:bg-white/30 px-2.5 py-1 rounded-lg flex items-center gap-1 transition">
+              <i data-lucide="sliders-horizontal" class="w-3.5 h-3.5"></i> Счета
+            </button>
+          </div>
+          <div class="text-2xl font-bold mb-3">${formatMoney(getTotalBalance())}</div>
+          <div class="grid grid-cols-2 gap-2 pt-2 border-t border-white/20 text-xs">
+            <div><span class="opacity-75 block">Доходы</span><span class="font-semibold text-sm">+${formatMoney(totalIncome)}</span></div>
+            <div><span class="opacity-75 block">Расходы</span><span class="font-semibold text-sm">-${formatMoney(totalExpense)}</span></div>
+          </div>
+        </div>
+
+        <div class="flex gap-2 overflow-x-auto no-scrollbar py-1">
+          <button onclick="selectAccountFilter('all')" class="px-3 py-2 rounded-xl text-xs font-medium whitespace-nowrap border transition-all duration-200 ${state.selectedAccountId === 'all' ? 'bg-emerald-500 text-white border-emerald-500 shadow-sm' : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700'}">Все счета</button>
+          ${state.accounts.map(a => `
+            <button onclick="selectAccountFilter('${a.id}')" class="px-3 py-2 rounded-xl text-xs font-medium whitespace-nowrap border flex items-center gap-2 transition-all duration-200 ${state.selectedAccountId === a.id ? 'bg-emerald-500 text-white border-emerald-500 shadow-sm' : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700'}">
+              <i data-lucide="${a.icon || 'wallet'}" class="w-3.5 h-3.5"></i>
+              <div class="text-left"><div>${a.name}</div><div class="text-[10px] opacity-80">${formatMoney(getAccountBalance(a.id))}</div></div>
+            </button>
+          `).join('')}
+        </div>
+
+        <div class="grid grid-cols-2 p-1 rounded-xl bg-slate-100 dark:bg-slate-800 text-xs font-medium">
+          <button onclick="setBudgetView('list')" class="py-1.5 rounded-lg transition-all duration-200 ${state.budgetView === 'list' ? 'bg-emerald-500 text-white shadow' : 'text-slate-400'}">Операции</button>
+          <button onclick="setBudgetView('analytics')" class="py-1.5 rounded-lg transition-all duration-200 ${state.budgetView === 'analytics' ? 'bg-emerald-500 text-white shadow' : 'text-slate-400'}">Аналитика</button>
+        </div>
+      `;
+
+      if (state.budgetView === 'analytics') {
+        return header + renderBudgetAnalytics(filteredTx, totalIncome, totalExpense);
+      }
+
+      return header + `
+        <div class="space-y-2.5 anim-fade-in">
+          <p class="text-[11px] text-slate-400">Нажми на запись, чтобы изменить сумму, дату или счёт:</p>
+          ${filteredTx.length === 0 ? `<p class="text-xs text-slate-400 text-center py-8">Операций пока нет</p>` : filteredTx.map(t => {
+            const cat = state.categories.find(c => c.id === t.categoryId) || { name: 'Прочее', color: '#64748b', icon: 'tag' };
+            const acc = state.accounts.find(a => a.id === t.accountId) || { name: 'Счёт' };
+            return `
+              <div onclick="openEditTx('${t.id}')" class="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200/80 dark:border-slate-800 flex items-center justify-between cursor-pointer active:scale-[0.99] transition-all duration-200">
+                <div class="flex items-center gap-3">
+                  <div class="w-10 h-10 rounded-xl flex items-center justify-center text-white shrink-0" style="background-color: ${cat.color}">
+                    <i data-lucide="${cat.icon || 'tag'}" class="w-5 h-5"></i>
+                  </div>
+                  <div>
+                    <div class="font-medium text-sm">${cat.name}</div>
+                    <div class="text-[11px] text-slate-400">${acc.name} • ${t.date}</div>
+                    ${t.comment ? `<div class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">${t.comment}</div>` : ''}
+                  </div>
+                </div>
+                <div class="text-right">
+                  <div class="font-bold text-sm ${t.type === 'income' ? 'text-emerald-500' : 'text-slate-800 dark:text-slate-100'}">${t.type === 'income' ? '+' : '-'}${formatMoney(t.amount)}</div>
+                  <span class="text-[10px] text-slate-400">Изменить</span>
+                </div>
+              </div>
+            `;
+          }).join('')}
+        </div>
+      `;
+    }
+
+    function renderBudgetAnalytics(transactions, totalIncome, totalExpense) {
+      const expenses = transactions.filter(t => t.type === 'expense');
+      const byCat = {};
+      expenses.forEach(t => byCat[t.categoryId] = (byCat[t.categoryId] || 0) + Number(t.amount));
+      const entries = Object.entries(byCat).map(([cid, amt]) => {
+        const cat = state.categories.find(c => c.id === cid) || { name: 'Прочее', color: '#64748b' };
+        const pct = totalExpense > 0 ? Math.round((amt / totalExpense) * 100) : 0;
+        return { cat, amt, pct };
+      }).sort((a,b) => b.amt - a.amt);
+
+      let currentDeg = 0;
+      const gradientParts = entries.map(e => {
+        const deg = (e.amt / (totalExpense || 1)) * 360;
+        const part = `${e.cat.color} ${currentDeg}deg ${currentDeg + deg}deg`;
+        currentDeg += deg;
+        return part;
+      });
+      const conicStyle = entries.length > 0
+        ? `background: conic-gradient(${gradientParts.join(', ')});`
+        : `background: #334155;`;
+
+      const maxBar = Math.max(totalIncome, totalExpense, 1);
+
+      return `
+        <div class="space-y-4 anim-fade-in">
+          <div class="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-800 space-y-3">
+            <h3 class="text-xs font-semibold uppercase tracking-wider text-slate-400">Доходы vs Расходы</h3>
+            <div class="space-y-2">
+              <div>
+                <div class="flex justify-between text-xs mb-1"><span>Доходы</span><span class="font-semibold text-emerald-500">+${formatMoney(totalIncome)}</span></div>
+                <div class="h-2.5 w-full rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
+                  <div class="h-full bg-emerald-500 rounded-full transition-all duration-500" style="width: ${Math.round((totalIncome / maxBar) * 100)}%"></div>
+                </div>
+              </div>
+              <div>
+                <div class="flex justify-between text-xs mb-1"><span>Расходы</span><span class="font-semibold text-rose-500">-${formatMoney(totalExpense)}</span></div>
+                <div class="h-2.5 w-full rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
+                  <div class="h-full bg-rose-500 rounded-full transition-all duration-500" style="width: ${Math.round((totalExpense / maxBar) * 100)}%"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-800">
+            <h3 class="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-4">Круговая диаграмма расходов</h3>
+            <div class="flex items-center gap-5">
+              <div class="w-28 h-28 rounded-full relative flex items-center justify-center shrink-0" style="${conicStyle}">
+                <div class="w-18 h-18 w-[72px] h-[72px] rounded-full bg-white dark:bg-slate-900 flex flex-col items-center justify-center text-center">
+                  <span class="text-[9px] text-slate-400">Расход</span>
+                  <span class="text-[11px] font-bold">${formatMoney(totalExpense)}</span>
+                </div>
+              </div>
+              <div class="flex-1 space-y-2">
+                ${entries.length === 0 ? `<p class="text-xs text-slate-400">Нет трат</p>` : entries.map(e => `
+                  <div class="flex items-center justify-between text-xs">
+                    <div class="flex items-center gap-1.5">
+                      <span class="w-2.5 h-2.5 rounded-full" style="background-color: ${e.cat.color}"></span>
+                      <span>${e.cat.name}</span>
+                    </div>
+                    <span class="font-medium">${e.pct}%</span>
+                  </div>
+                `).join('')}
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    // ==========================================
+    // ВКЛАДКА 3: КАЛЕНДАРЬ
+    // ==========================================
+    function renderCalendarTab(accent) {
+      const monthNames = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
+      const year = state.calendarYear;
+      const month = state.calendarMonth;
+      const firstDay = new Date(year, month, 1);
+      const startOffset = (firstDay.getDay() + 6) % 7;
+      const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+      let cells = '';
+      for (let i = 0; i < startOffset; i++) cells += `<div class="h-10"></div>`;
+      for (let d = 1; d <= daysInMonth; d++) {
+        const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+        const hasEvents = state.events.some(e => e.date.slice(5) === dateStr.slice(5));
+        const isSelected = state.selectedDate === dateStr;
+        cells += `
+          <button onclick="selectCalendarDate('${dateStr}')" class="h-10 rounded-xl flex flex-col items-center justify-center text-xs font-medium transition-all duration-200 ${isSelected ? 'bg-sky-500 text-white font-bold scale-105 shadow' : 'hover:bg-slate-100 dark:hover:bg-slate-800'}">
+            <span>${d}</span>
+            ${hasEvents ? `<span class="w-1.5 h-1.5 rounded-full ${isSelected ? 'bg-white' : 'bg-sky-500'} mt-0.5"></span>` : ''}
+          </button>
+        `;
+      }
+
+      return `
+        <div class="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-800">
+          <div class="flex justify-between items-center mb-3">
+            <button onclick="changeMonth(-1)" class="p-1.5 rounded-lg bg-slate-200/70 dark:bg-slate-700 active:scale-90 transition"><i data-lucide="chevron-left" class="w-4 h-4"></i></button>
+            <div class="font-bold text-sm">${monthNames[month]} ${year}</div>
+            <button onclick="changeMonth(1)" class="p-1.5 rounded-lg bg-slate-200/70 dark:bg-slate-700 active:scale-90 transition"><i data-lucide="chevron-right" class="w-4 h-4"></i></button>
+          </div>
+          <div class="grid grid-cols-7 text-center text-[11px] text-slate-400 mb-1">
+            <span>Пн</span><span>Вт</span><span>Ср</span><span>Чт</span><span>Пт</span><span>Сб</span><span>Вс</span>
+          </div>
+          <div class="grid grid-cols-7 gap-1">${cells}</div>
+        </div>
+
+        <div class="space-y-2.5">
+          <div class="flex justify-between items-center">
+            <h4 class="text-xs font-semibold uppercase tracking-wider text-slate-400">Праздники и дни рождения</h4>
+            <button onclick="testNotification()" class="text-xs text-sky-500 font-medium flex items-center gap-1">
+              <i data-lucide="bell-ring" class="w-3.5 h-3.5"></i> Тест пуша
+            </button>
+          </div>
+          ${state.events.length === 0 ? `<p class="text-xs text-slate-400 text-center py-6">Событий пока нет</p>` : state.events.map(ev => `
+            <div class="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200/80 dark:border-slate-800 flex justify-between items-center transition-all duration-200">
+              <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-xl bg-sky-500/15 text-sky-500 flex items-center justify-center">
+                  <i data-lucide="${ev.type === 'birthday' ? 'cake' : 'sparkles'}" class="w-5 h-5"></i>
+                </div>
+                <div>
+                  <div class="font-medium text-sm">${ev.title}</div>
+                  <div class="text-[11px] text-slate-400">📅 ${ev.date} • ⏰ ${ev.notifyBefore}, в ${ev.notifyTime}</div>
+                </div>
+              </div>
+              <button onclick="deleteEvent('${ev.id}')" class="p-2 text-slate-400 hover:text-rose-500"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
+            </div>
+          `).join('')}
+        </div>
+      `;
+    }
+
+    // ==========================================
+    // МОДАЛЬНЫЕ ОКНА С ПЛАВНОЙ АНИМАЦИЕЙ
+    // ==========================================
+    function renderModal(accent) {
+      let body = '';
+      if (uiModal.type === 'transaction') {
+        const t = uiModal.data;
+        const cats = state.categories.filter(c => c.type === t.type);
+        body = `
+          <h3 class="text-lg font-bold mb-3">${t.id ? 'Редактировать операцию' : 'Новая операция'}</h3>
+          <div class="grid grid-cols-2 p-1 rounded-xl bg-slate-100 dark:bg-slate-800 text-xs font-medium mb-3">
+            <button onclick="switchTxType('expense')" class="py-2 rounded-lg transition ${t.type === 'expense' ? 'bg-rose-500 text-white shadow' : 'text-slate-400'}">Расход</button>
+            <button onclick="switchTxType('income')" class="py-2 rounded-lg transition ${t.type === 'income' ? 'bg-emerald-500 text-white shadow' : 'text-slate-400'}">Доход</button>
+          </div>
+          <div class="space-y-3 text-sm">
+            <div><label class="text-xs text-slate-400 block mb-1">Сумма (₽)</label><input id="tx-amount" type="number" value="${t.amount || ''}" placeholder="0" class="w-full px-3 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-lg font-bold focus:outline-none" /></div>
+            <div class="grid grid-cols-2 gap-2">
+              <div><label class="text-xs text-slate-400 block mb-1">Счёт</label><select id="tx-account" class="w-full px-3 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 focus:outline-none">${state.accounts.map(a => `<option value="${a.id}" ${t.accountId === a.id ? 'selected' : ''}>${a.name}</option>`).join('')}</select></div>
+              <div><label class="text-xs text-slate-400 block mb-1">Дата</label><input id="tx-date" type="date" value="${t.date}" class="w-full px-3 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 focus:outline-none" /></div>
+            </div>
+            <div><label class="text-xs text-slate-400 block mb-1">Категория</label><select id="tx-category" class="w-full px-3 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 focus:outline-none">${cats.map(c => `<option value="${c.id}" ${t.categoryId === c.id ? 'selected' : ''}>${c.name}</option>`).join('')}</select></div>
+            <div><label class="text-xs text-slate-400 block mb-1">Комментарий</label><input id="tx-comment" type="text" value="${t.comment || ''}" placeholder="Комментарий..." class="w-full px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 focus:outline-none" /></div>
+            <div class="flex gap-2 pt-2">
+              ${t.id ? `<button onclick="deleteTx('${t.id}')" class="px-4 py-2.5 rounded-xl bg-rose-500/15 text-rose-500 font-medium">Удалить</button>` : ''}
+              <button onclick="saveTxModal()" class="flex-1 py-2.5 rounded-xl bg-emerald-500 text-white font-semibold active:scale-95 transition">Сохранить</button>
+            </div>
+          </div>
+        `;
+      } else if (uiModal.type === 'folders') {
+        body = `
+          <h3 class="text-lg font-bold mb-3">Папки заметок</h3>
+          <div class="space-y-2 mb-4 max-h-60 overflow-y-auto">${state.folders.map(f => `<div class="flex justify-between items-center px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800"><span class="text-sm font-medium">${f.name}</span><button onclick="deleteFolder('${f.id}')" class="text-rose-500 text-xs">Удалить</button></div>`).join('')}</div>
+          <div class="flex gap-2"><input id="new-folder-name" type="text" placeholder="Новая папка..." class="flex-1 px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-sm focus:outline-none" /><button onclick="addFolder()" class="px-4 py-2 rounded-xl bg-orange-500 text-white text-sm font-semibold">+</button></div>
+        `;
+      } else if (uiModal.type === 'accounts') {
+        body = `
+          <h3 class="text-lg font-bold mb-3">Мои счета</h3>
+          <div class="space-y-2.5 mb-4 max-h-64 overflow-y-auto">${state.accounts.map(a => `
+            <div class="p-3 rounded-xl bg-slate-100 dark:bg-slate-800 space-y-1.5">
+              <div class="flex justify-between items-center"><input type="text" value="${a.name}" onchange="updateAccount('${a.id}','name',this.value)" class="font-semibold text-sm bg-transparent focus:outline-none" />${state.accounts.length > 1 ? `<button onclick="deleteAccount('${a.id}')" class="text-xs text-rose-500">Удалить</button>` : ''}</div>
+              <div class="flex justify-between items-center text-xs text-slate-400"><span>Начальный баланс (₽):</span><input type="number" value="${a.initialBalance}" onchange="updateAccount('${a.id}','initialBalance',this.value)" class="w-28 px-2 py-1 rounded bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-right font-medium" /></div>
+            </div>
+          `).join('')}</div>
+          <div class="flex gap-2"><input id="new-acc-name" type="text" placeholder="Новый счёт..." class="flex-1 px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-sm focus:outline-none" /><button onclick="addAccount()" class="px-4 py-2 rounded-xl bg-emerald-500 text-white font-semibold">+</button></div>
+        `;
+      } else if (uiModal.type === 'categories') {
+        const tabType = uiModal.catType || 'expense';
+        const list = state.categories.filter(c => c.type === tabType);
+        body = `
+          <h3 class="text-lg font-bold mb-3">Категории бюджета</h3>
+          <div class="grid grid-cols-2 p-1 rounded-xl bg-slate-100 dark:bg-slate-800 text-xs font-medium mb-3">
+            <button onclick="switchCatType('expense')" class="py-1.5 rounded-lg transition ${tabType === 'expense' ? 'bg-rose-500 text-white' : 'text-slate-400'}">Расходы</button>
+            <button onclick="switchCatType('income')" class="py-1.5 rounded-lg transition ${tabType === 'income' ? 'bg-emerald-500 text-white' : 'text-slate-400'}">Доходы</button>
+          </div>
+          <div class="space-y-2 mb-4 max-h-56 overflow-y-auto">${list.map(c => `<div class="flex justify-between items-center px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800"><div class="flex items-center gap-2"><input type="color" value="${c.color}" onchange="updateCat('${c.id}','color',this.value)" class="w-6 h-6 bg-transparent border-0" /><input type="text" value="${c.name}" onchange="updateCat('${c.id}','name',this.value)" class="text-sm bg-transparent focus:outline-none" /></div><button onclick="deleteCat('${c.id}')" class="text-xs text-rose-500">Удалить</button></div>`).join('')}</div>
+          <div class="flex gap-2">
+            <input id="new-cat-color" type="color" value="#10b981" class="w-10 h-10 rounded-xl bg-transparent" />
+            <input id="new-cat-name" type="text" placeholder="Новая категория..." class="flex-1 px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-sm focus:outline-none" />
+            <button onclick="addCat('${tabType}')" class="px-4 py-2 rounded-xl bg-emerald-500 text-white font-semibold">+</button>
+          </div>
+        `;
+      } else if (uiModal.type === 'event') {
+        body = `
+          <h3 class="text-lg font-bold mb-3">Новое событие</h3>
+          <div class="space-y-3 text-sm">
+            <div><label class="text-xs text-slate-400 block mb-1">Название</label><input id="ev-title" type="text" placeholder="Например: День рождения мамы" class="w-full px-3 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 focus:outline-none" /></div>
+            <div class="grid grid-cols-2 gap-2">
+              <div><label class="text-xs text-slate-400 block mb-1">Дата</label><input id="ev-date" type="date" value="${state.selectedDate}" class="w-full px-3 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 focus:outline-none" /></div>
+              <div><label class="text-xs text-slate-400 block mb-1">Тип</label><select id="ev-type" class="w-full px-3 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 focus:outline-none"><option value="birthday">День рождения</option><option value="holiday">Праздник</option></select></div>
+            </div>
+            <div class="grid grid-cols-2 gap-2">
+              <div><label class="text-xs text-slate-400 block mb-1">Когда напомнить</label><select id="ev-before" class="w-full px-3 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 focus:outline-none"><option>За 1 день</option><option>В день события</option><option>За 3 дня</option><option>За 7 дней</option></select></div>
+              <div><label class="text-xs text-slate-400 block mb-1">Время</label><input id="ev-time" type="time" value="09:00" class="w-full px-3 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 focus:outline-none" /></div>
+            </div>
+            <button onclick="saveEvent()" class="w-full py-2.5 rounded-xl bg-sky-500 text-white font-semibold mt-2 active:scale-95 transition">Сохранить</button>
+          </div>
+        `;
+      }
+
+      return `
+        <div onclick="closeModal()" class="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4 ${isClosingModal ? 'anim-backdrop-out' : 'anim-backdrop-in'}">
+          <div onclick="event.stopPropagation()" class="w-full max-w-md bg-white dark:bg-slate-900 rounded-t-3xl sm:rounded-3xl p-5 border-t border-slate-200 dark:border-slate-800 shadow-2xl ${isClosingModal ? 'anim-sheet-down' : 'anim-sheet-up'}">
+            <div class="w-10 h-1 bg-slate-300 dark:bg-slate-700 rounded-full mx-auto mb-3"></div>
+            <div class="flex justify-end -mt-2 mb-1"><button onclick="closeModal()" class="p-1 text-slate-400"><i data-lucide="x" class="w-5 h-5"></i></button></div>
+            ${body}
+          </div>
+        </div>
+      `;
+    }
+
+    // ==========================================
+    // ЛОГИКА ПЕРЕКЛЮЧЕНИЯ И ДЕЙСТВИЙ
+    // ==========================================
+    function toggleTheme() {
+      state.theme = state.theme === 'dark' ? 'light' : 'dark';
+      tabAnimClass = '';
+      saveState();
+      render();
+    }
+
+    function switchTab(newTab) {
+      if (newTab === state.activeTab && !editingNoteId) return;
+      const oldIdx = TABS_ORDER.indexOf(state.activeTab);
+      const newIdx = TABS_ORDER.indexOf(newTab);
+
+      // Выбираем направление анимации (справа налево или слева направо)
+      tabAnimClass = newIdx > oldIdx ? 'anim-slide-right' : 'anim-slide-left';
+      state.activeTab = newTab;
+      editingNoteId = null;
+      saveState();
+      render();
+    }
+
+    function handlePlusClick() {
+      if (state.activeTab === 'notes') {
+        const n = { id: 'n_' + Date.now(), title: '', content: '', folderId: state.activeFolderId !== 'all' && state.activeFolderId !== 'trash' ? state.activeFolderId : (state.folders[0]?.id || 'thoughts'), isPinned: false, isDeleted: false, updatedAt: 'Только что', checklist: [] };
+        state.notes.unshift(n);
+        isClosingEditor = false;
+        editingNoteId = n.id;
+        saveState();
+        render();
+      } else if (state.activeTab === 'budget') {
+        isClosingModal = false;
+        uiModal = { type: 'transaction', data: { id: null, type: 'expense', amount: '', accountId: state.selectedAccountId !== 'all' ? state.selectedAccountId : state.accounts[0].id, categoryId: state.categories.find(c => c.type === 'expense')?.id || '', date: new Date().toISOString().slice(0, 10), comment: '' } };
+        tabAnimClass = '';
+        render();
+      } else if (state.activeTab === 'calendar') {
+        isClosingModal = false;
+        uiModal = { type: 'event' };
+        tabAnimClass = '';
+        render();
+      }
+    }
+
+    function selectFolder(id) {
+      state.activeFolderId = id;
+      tabAnimClass = 'anim-fade-in';
+      saveState();
+      render();
+    }
+
+    function openNote(id) {
+      isClosingEditor = false;
+      editingNoteId = id;
+      render();
+    }
+
+    function closeNoteEditor() {
+      isClosingEditor = true;
+      render();
+      setTimeout(() => {
+        const n = state.notes.find(x => x.id === editingNoteId);
+        if (n && !n.title.trim() && !n.content.trim() && (!n.checklist || n.checklist.length === 0)) {
+          state.notes = state.notes.filter(x => x.id !== editingNoteId);
+        }
+        editingNoteId = null;
+        isClosingEditor = false;
+        tabAnimClass = 'anim-fade-in';
+        saveState();
+        render();
+      }, 190);
+    }
+
+    function autoSaveNote(id, f, val) { const n = state.notes.find(x => x.id === id); if (n) { n[f] = val; n.updatedAt = 'Только что'; saveState(); } }
+    function updateNoteFolder(nid, fid) { const n = state.notes.find(x => x.id === nid); if (n) { n.folderId = fid; saveState(); render(); } }
+    function togglePinNote(id) { const n = state.notes.find(x => x.id === id); if (n) { n.isPinned = !n.isPinned; saveState(); render(); } }
+    function moveNoteToTrash(id) { const n = state.notes.find(x => x.id === id); if (n) { n.isDeleted = true; closeNoteEditor(); } }
+    function restoreNote(id) { const n = state.notes.find(x => x.id === id); if (n) { n.isDeleted = false; tabAnimClass = ''; saveState(); render(); } }
+    function deleteNoteForever(id) { state.notes = state.notes.filter(x => x.id !== id); tabAnimClass = ''; saveState(); render(); }
+    function addChecklistItem(id) { const n = state.notes.find(x => x.id === id); if (n) { n.checklist = n.checklist || []; n.checklist.push({ id: 'c_' + Date.now(), text: '', done: false }); saveState(); render(); } }
+    function toggleCheckItem(nid, cid) { const n = state.notes.find(x => x.id === nid); const c = n?.checklist?.find(x => x.id === cid); if (c) { c.done = !c.done; tabAnimClass = ''; saveState(); render(); } }
+    function autoSaveCheckText(nid, cid, val) { const n = state.notes.find(x => x.id === nid); const c = n?.checklist?.find(x => x.id === cid); if (c) { c.text = val; saveState(); } }
+    function removeCheckItem(nid, cid) { const n = state.notes.find(x => x.id === nid); if (n) { n.checklist = n.checklist.filter(x => x.id !== cid); saveState(); render(); } }
+    function addFolder() { const val = document.getElementById('new-folder-name')?.value.trim(); if (val) { state.folders.push({ id: 'f_' + Date.now(), name: val }); saveState(); render(); } }
+    function deleteFolder(id) { state.folders = state.folders.filter(f => f.id !== id); if (state.activeFolderId === id) state.activeFolderId = 'all'; saveState(); render(); }
+
+    function selectAccountFilter(id) { state.selectedAccountId = id; tabAnimClass = ''; saveState(); render(); }
+    function setBudgetView(v) { state.budgetView = v; tabAnimClass = ''; saveState(); render(); }
+    function openEditTx(id) { const t = state.transactions.find(x => x.id === id); if (t) { isClosingModal = false; uiModal = { type: 'transaction', data: { ...t } }; tabAnimClass = ''; render(); } }
+    function switchTxType(t) { if (uiModal) { uiModal.data.type = t; uiModal.data.categoryId = state.categories.find(c => c.type === t)?.id || ''; render(); } }
+
+    function saveTxModal() {
+      const amount = Number(document.getElementById('tx-amount').value);
+      const accountId = document.getElementById('tx-account').value;
+      const date = document.getElementById('tx-date').value;
+      const categoryId = document.getElementById('tx-category').value;
+      const comment = document.getElementById('tx-comment').value.trim();
+      if (!amount || amount <= 0) return alert('Укажи сумму больше 0');
+      const d = uiModal.data;
+      if (d.id) {
+        const idx = state.transactions.findIndex(t => t.id === d.id);
+        if (idx !== -1) state.transactions[idx] = { ...d, amount, accountId, date, categoryId, comment };
+      } else {
+        state.transactions.unshift({ id: 't_' + Date.now(), type: d.type, amount, accountId, date, categoryId, comment });
+      }
+      saveState();
+      closeModal();
+    }
+
+    function deleteTx(id) { state.transactions = state.transactions.filter(t => t.id !== id); saveState(); closeModal(); }
+    function updateAccount(id, f, val) { const a = state.accounts.find(x => x.id === id); if (a) { a[f] = f === 'initialBalance' ? Number(val) : val; saveState(); render(); } }
+    function addAccount() { const val = document.getElementById('new-acc-name')?.value.trim(); if (val) { state.accounts.push({ id: 'acc_' + Date.now(), name: val, initialBalance: 0, icon: 'wallet' }); saveState(); render(); } }
+    function deleteAccount(id) { state.accounts = state.accounts.filter(a => a.id !== id); if (state.selectedAccountId === id) state.selectedAccountId = 'all'; saveState(); render(); }
+    function switchCatType(t) { if (uiModal) { uiModal.catType = t; render(); } }
+    function updateCat(id, f, val) { const c = state.categories.find(x => x.id === id); if (c) { c[f] = val; saveState(); render(); } }
+    function addCat(type) {
+      const val = document.getElementById('new-cat-name')?.value.trim();
+      const color = document.getElementById('new-cat-color')?.value || '#10b981';
+      if (val) { state.categories.push({ id: 'cat_' + Date.now(), name: val, type, color, icon: 'tag' }); saveState(); render(); }
+    }
+    function deleteCat(id) { state.categories = state.categories.filter(c => c.id !== id); saveState(); render(); }
+
+    function changeMonth(d) { state.calendarMonth += d; if (state.calendarMonth < 0) { state.calendarMonth = 11; state.calendarYear--; } if (state.calendarMonth > 11) { state.calendarMonth = 0; state.calendarYear++; } tabAnimClass = ''; saveState(); render(); }
+    function selectCalendarDate(d) { state.selectedDate = d; tabAnimClass = ''; saveState(); render(); }
+    function saveEvent() {
+      const title = document.getElementById('ev-title')?.value.trim();
+      const date = document.getElementById('ev-date')?.value;
+      const type = document.getElementById('ev-type')?.value || 'birthday';
+      const notifyBefore = document.getElementById('ev-before')?.value;
+      const notifyTime = document.getElementById('ev-time')?.value;
+      if (!title || !date) return alert('Заполни название и дату');
+      state.events.push({ id: 'e_' + Date.now(), title, date, type, notifyBefore, notifyTime });
+      saveState();
+      closeModal();
+    }
+    function deleteEvent(id) { state.events = state.events.filter(e => e.id !== id); tabAnimClass = ''; saveState(); render(); }
+    function testNotification() { alert('🔔 Clever: Скоро важное событие! Время заглянуть в календарь.'); }
+
+    function openModal(t) {
+      isClosingModal = false;
+      uiModal = { type: t, catType: 'expense' };
+      tabAnimClass = '';
+      render();
+    }
+
+    function closeModal() {
+      if (!uiModal) return;
+      isClosingModal = true;
+      tabAnimClass = '';
+      render();
+      setTimeout(() => {
+        uiModal = null;
+        isClosingModal = false;
+        render();
+      }, 220);
+    }
+
+    render();
+  </script>
+</body>
+</html>
