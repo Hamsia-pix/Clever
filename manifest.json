@@ -1,5 +1,5 @@
 {
-  "id": "/clever/",
+  "id": "/Clever/",
   "name": "Clever",
   "short_name": "Clever",
   "description": "Удобное мобильное приложение для заметок, учета бюджета и календаря событий.",
@@ -14,19 +14,19 @@
     {
       "src": "icon.png",
       "sizes": "192x192",
-      "type": "image/png",
+      "type": "image/jpeg",
       "purpose": "any"
     },
     {
       "src": "icon.png",
       "sizes": "512x512",
-      "type": "image/png",
+      "type": "image/jpeg",
       "purpose": "any"
     },
     {
       "src": "icon.png",
       "sizes": "512x512",
-      "type": "image/png",
+      "type": "image/jpeg",
       "purpose": "maskable"
     }
   ]
